@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen Chat Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .chat-container {
+            height: calc(100vh - 200px);
+        }
+        .typing-indicator {
+            display: inline-block;
+        }
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: #3B82F6;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1.0); }
+        }
+        .metadata {
+            font-size: 0.75rem;
+            color: #6B7280;
+            margin-top: 0.25rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold text-center mb-8 text-blue-600">Qwen 2.5 Chat Interface</h1>
+        
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <div id="status" class="text-sm text-gray-600 mb-4">
+                <span class="inline-flex items-center">
+                    <span id="statusDot" class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+                    <span id="statusText">Ready</span>
+                </span>
+            </div>
+            
+            <div id="chat-container" class="chat-container overflow-y-auto mb-4 border rounded-lg p-4">
+                <div id="messages" class="space-y-4"></div>
+            </div>
+            
+            <form id="chat-form" class="flex gap-2">
+                <input type="text" 
+                       id="prompt" 
+                       class="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" 
+                       placeholder="Type your message here..."
+                       required>
+                <button type="submit" 
+                        id="sendButton"
+                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                    Send
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('chat-form');
+        const messagesContainer = document.getElementById('messages');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const sendButton = document.getElementById('sendButton');
+
+        function setStatus(status, isError = false) {
+            statusDot.className = `w-2 h-2 rounded-full mr-2 ${isError ? 'bg-red-500' : 'bg-green-500'}`;
+            statusText.textContent = status;
+        }
+
+        function addMessage(content, isUser = false, metadata = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${isUser ? 'justify-end' : 'justify-start'} flex-col`;
+            
+            const bubbleWrapper = document.createElement('div');
+            bubbleWrapper.className = `flex ${isUser ? 'justify-end' : 'justify-start'}`;
+            
+            const bubble = document.createElement('div');
+            bubble.className = `max-w-[70%] rounded-lg p-3 ${
+                isUser ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-800'
+            }`;
+            bubble.textContent = content;
+            
+            bubbleWrapper.appendChild(bubble);
+            messageDiv.appendChild(bubbleWrapper);
+
+            // Add metadata if provided
+            if (metadata) {
+                const metadataDiv = document.createElement('div');
+                metadataDiv.className = `metadata ${isUser ? 'text-right' : 'text-left'} px-2`;
+                metadataDiv.innerHTML = `
+                    Generation time: ${metadata.generation_time} | 
+                    Input tokens: ${metadata.input_tokens} | 
+                    Output tokens: ${metadata.output_tokens}
+                `;
+                messageDiv.appendChild(metadataDiv);
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function addTypingIndicator() {
+            const indicatorDiv = document.createElement('div');
+            indicatorDiv.id = 'typing-indicator';
+            indicatorDiv.className = 'flex justify-start';
+            indicatorDiv.innerHTML = `
+                <div class="bg-gray-100 rounded-lg p-3">
+                    <div class="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            `;
+            messagesContainer.appendChild(indicatorDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        function setButtonLoading(loading) {
+            sendButton.disabled = loading;
+            sendButton.innerHTML = loading ? 
+                '<span class="inline-flex items-center">Sending...<span class="ml-2 typing-indicator"><span></span><span></span><span></span></span></span>' : 
+                'Send';
+            sendButton.className = `px-6 py-2 rounded-lg transition-colors ${
+                loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
+            } text-white`;
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const prompt = document.getElementById('prompt');
+            const userMessage = prompt.value.trim();
+            
+            if (!userMessage) return;
+            
+            // Disable form and show loading state
+            setButtonLoading(true);
+            prompt.disabled = true;
+            
+            // Add user message
+            addMessage(userMessage, true);
+            prompt.value = '';
+            
+            // Show typing indicator
+            addTypingIndicator();
+            setStatus('Generating response...');
+            
+            try {
+                console.log('Sending request to /generate');
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ prompt: userMessage }),
+                });
+                
+                console.log('Received response:', response);
+                const data = await response.json();
+                console.log('Parsed data:', data);
+                
+                if (response.ok) {
+                    removeTypingIndicator();
+                    addMessage(data.response, false, data.metadata);
+                    setStatus('Ready');
+                } else {
+                    throw new Error(data.error || 'Failed to generate response');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                removeTypingIndicator();
+                setStatus(`Error: ${error.message}`, true);
+                addMessage('Sorry, an error occurred while generating the response.');
+            } finally {
+                // Re-enable form
+                setButtonLoading(false);
+                prompt.disabled = false;
+                prompt.focus();
+            }
+        });
+    </script>
+</body>
+</html> 
